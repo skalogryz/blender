@@ -10,30 +10,58 @@ interface
 //      name[64] - is an array of 64-elements
 // * normname - the name without any modifiers (*void -> void) (name[64] -> name)
 // * isPoitner - true of false
-// * maxArray = -1 - not an array, maxArray>=0 array of the size
+// * arrSizes.count = 0 - not an array, maxArray>=0 array of the size
 // The function returns true, if succesfully parsed the name.
 // False, if fails (array size is invalid)
-function BlenderNameParse(const name: string; out normname: string; out isPointer: Boolean; out maxArray: Integer): Boolean;
+const
+  MAX_ARRSIZE = 4;
+type
+  TArrayIndices = record
+    count : Integer;
+    sizes : array[0..MAX_ARRSIZE - 1] of integer;
+  end;
+
+function BlenderNameParse(const name: string; out normname: string; out isPointer: Boolean; out arrSizes: TArrayIndices): Boolean;
 
 implementation
 
-function BlenderNameParse(const name: string; out normname: string; out isPointer: Boolean; out maxArray: Integer): Boolean;
+function BlenderNameParse(const name: string; out normname: string; out isPointer: Boolean; out arrSizes: TArrayIndices): Boolean;
 var
   i : integer;
   j : integer;
+  k   : integer;
   err : integer;
+  idx : integer;
 begin
   Result := false;
   normname := '';
   isPointer := false;
-  maxArray := -1;
+  arrSizes.count := 0;
 
-  i:=length(name);
+  //i:=length(name);
+  i:=1;
+  while (i<=length(name)) and (name[i]<>'[') do inc(i);
+
+  if (i < length(name)) then begin
+    k := i;
+    while (i<length(name)) do begin
+      inc(i); // [
+      j:=i;
+      while (i<length(name)) and (name[i] in ['0'..'9']) do inc(i);
+      Val(Copy(name, j, i-j), idx, err);
+      if (err > 0) then Exit;
+      inc(i); // ]
+      if arrSizes.count = length(arrSizes.sizes) then Exit;
+      arrSizes.sizes[arrSizes.count]:=idx;
+      inc(arrSizes.count);
+    end;
+    i := k;
+  end else
+    i := length(name);
+
   if (length(name)>0) and (name[length(name)]=']') then begin
     dec(i);
     j:=i;
-    while (i>0) and (name[i] in ['0'..'9']) do dec(i);
-    Val(Copy(name, i+1, j-i), maxArray, err);
     if (err>0) then Exit;
     if (i>0) and (name[i]='[') then dec(i);
   end;
