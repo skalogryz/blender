@@ -61,6 +61,7 @@ type
     ErrCode : Integer;
     DataOffset: Int64;
     DataSize  : Int64;
+    DataCode  : string;
 
     curBlock : TFileBlock;
     function FindFirst(st: TStream): Boolean; overload;
@@ -68,6 +69,7 @@ type
     property Offset: Int64 read fPos;
     property PtrSize: Byte read fPtrSize;
     property isPtrLE: Boolean read fisPtrLE;
+    property Data: TStream read fData;
   end;
 
 const
@@ -227,7 +229,7 @@ begin
 
   if isEof or isError then Exit;
 
-  fData.Position:=fPos;
+  if fData.Position<>fPos then fData.Position:=fPos;
 
   ofs:=ReadBlockHdr(fData, hdr, isPtr32, isPtrLE);
   curBlock:=hdr;
@@ -241,6 +243,7 @@ begin
   inc(fPos,ofs);
   DataOffset:=fPos;
   DataSize:=hdr.Size;
+  DataCode:=hdr.code;
   inc(fPos,hdr.size);
   Result:=true;
 end;
