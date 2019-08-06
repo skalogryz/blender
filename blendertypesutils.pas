@@ -1,4 +1,4 @@
-unit blendertypesUtils;
+unit blenderTypesUtils;
 
 {$mode delphi}{$H+}
 
@@ -21,11 +21,15 @@ type
     sizes : array[0..MAX_ARRSIZE - 1] of integer;
   end;
 
-function BlenderNameParse(const name: string; out normname: string; out isPointer: Boolean; out arrSizes: TArrayIndices): Boolean;
+// tood: add support for function pointers!
+type
+  TPointerModifier = (pmNone, pmPointer, pmDoublePointer, pmFuncRef);
+
+function BlenderNameParse(const name: string; out normname: string; out isPointer: TPointerModifier; out arrSizes: TArrayIndices): Boolean;
 
 implementation
 
-function BlenderNameParse(const name: string; out normname: string; out isPointer: Boolean; out arrSizes: TArrayIndices): Boolean;
+function BlenderNameParse(const name: string; out normname: string; out isPointer: TPointerModifier; out arrSizes: TArrayIndices): Boolean;
 var
   i : integer;
   j : integer;
@@ -35,7 +39,7 @@ var
 begin
   Result := false;
   normname := '';
-  isPointer := false;
+  isPointer := pmNone;
   arrSizes.count := 0;
 
   //i:=length(name);
@@ -66,12 +70,22 @@ begin
     if (i>0) and (name[i]='[') then dec(i);
   end;
 
-  if Pos('*',name)=1 then begin
-    normname := Copy(name, 2, i-1);
-    isPointer := true;
+  if (Pos('(',name)=1) and (Pos('*',name)=2) then begin
+    i:=3;
+    while (i<=length(name)) and (name[i]<>')') do inc(i);
+    normname := Copy(name, 3, i-3);
+    isPointer := pmFuncRef;
+  end else if Pos('*',name)=1 then begin
+    if (length(name)>1) and (name[2]='*') then begin
+      normname := Copy(name, 3, i-2);
+      isPointer := pmDoublePointer;
+    end else begin
+      normname := Copy(name, 2, i-1);
+      isPointer := pmPointer;
+    end;
   end else begin
     normname := Copy(name, 1, i);
-    isPointer := false;
+    isPointer := pmNone;
   end;
   Result := normname <> '';
 end;
