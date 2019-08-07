@@ -1,4 +1,4 @@
-unit blenderfile;
+unit BlenderFile;
 
 {$mode delphi}{$H+}
 
