@@ -1,4 +1,4 @@
-unit blenderTypesUtils;
+unit BlenderTypesUtils;
 
 {$mode delphi}{$H+}
 
