@@ -5,7 +5,9 @@ unit BlenderClasses;
 interface
 
 uses
-  SysUtils, Classes, BlenderFile, gmap, ghashmap;
+  SysUtils, Classes  , fgl
+  ,gmap, ghashmap, gvector
+  ,BlenderFile, BlenderTypesUtils;
 
 type
 
@@ -20,19 +22,31 @@ type
   { TBlendBlockMapCompare }
 
   TBlendBlockMapCompare = class
-    class function c(const addr1, addr2: Int64): Boolean;
+    class function c(addr1, addr2: Int64): Boolean;
   end;
 
   // keeps TBlendBlock by their "memptr" for an easier connection
   TBlendBlockMap = specialize TMap<Int64, TBlendBlock, TBlendBlockMapCompare>;
 
+  { TBlendBlockList }
+
+  TBlendBlockList = class(specialize TVector<TBlendBlock>)
+  private
+    function GetCount: Integer;
+  public
+    function Add(block: TBlendBlock): Integer;
+    property Count: Integer read GetCount;
+  end;
+
   { TBlend }
 
   TBlend = class(TObject)
   public
-    blocks : TList; // of TBlendBlock
-    dna    : TSDNA;
-    blockmap : TBlendBlockMap;
+    blocks      : TBlendBlockList; // of TBlendBlock
+    dna         : TSDNA;
+    blockmap    : TBlendBlockMap;
+    ptrSize     : Integer;
+    isLittleEnd : Boolean;
     constructor Create;
     destructor Destroy; override;
     function AddBlock(const header: TFileBlock; dataFileOfs: int64): TBlendBlock;
@@ -41,9 +55,13 @@ type
 
   { TBlendDNA }
 
+  // These are extra information of normalized reference of a field
   TBlendDNAStructField = record
-    ofs  : Integer;
-    size : Integer;
+    ofs     : Integer; // offset
+    size    : Integer; // the actualy size of the field. For pointers,
+                       //   this would be PtrSize
+                       //   for arrays this is type size * array size
+    nameidx : Integer; // the index in namehash of normalized named
   end;
 
   TBlendDNAStruct = record
@@ -61,16 +79,19 @@ type
 
   TBlendDNA = class(TObject)
   private
-    prepdna    : array of TBlendDNAStruct;
-    namehash   : TBlendDNANameHash;
+    prepdna    : array of TBlendDNAStruct; // each entry in prepDna correpsonds to a struct in "dna"
+
+    namehash   : TBlendDNANameHash; // normalized names. No modifiers.
     structhash : TBlendDNANameHash;
   protected
     procedure PrepareDNA;
   public
+    ptrSize    : integer; // must have pointer size! to be able to prepare structures propertly
     dna        : TSDNA;
-    constructor Create;
+    constructor Create(aptrSize: integer);
     destructor Destroy; override;
 
+    procedure SetDNA(const adna: TSDNA); overload;
     procedure SetDNA(const buf: array of byte; bufSize: Integer); overload;
 
     function GetFieldSizeOfs(stidx: Integer; fieldidx: Integer;
@@ -158,6 +179,9 @@ begin
       Result := false;
       Exit;
     end;
+    blend.ptrSize := rdr.PtrSize;
+    blend.isLittleEnd := rdr.isPtrLE;
+
     while rdr.NextBlock do begin
       b := blend.AddBlock(rdr.curBlock, rdr.DataOffset);
       if rdr.curBlock.Code = BLOCK_SDNA then
@@ -167,6 +191,19 @@ begin
   finally
     rdr.Free;
   end;
+end;
+
+{ TBlendBlockList }
+
+function TBlendBlockList.GetCount: Integer;
+begin
+  Result := Size;
+end;
+
+function TBlendBlockList.Add(block: TBlendBlock): Integer;
+begin
+  pushback(block);
+  Result := Count-1;
 end;
 
 { TBlendStructRead }
@@ -471,6 +508,13 @@ end;
 
 { TBlendDNA }
 
+type
+  TNameReference = record
+    ptr : TPointerModifier;
+    arr : TArrayIndices;
+    idx : Integer;
+  end;
+
 procedure TBlendDNA.PrepareDNA;
 var
   i : integer;
@@ -478,8 +522,25 @@ var
   cnt : integer;
   ofs : integer;
   ln  : integer;
+  nm  : string;
+  namesref : array of TNameReference;
+  ptr : TPointerModifier;
+  arr : TArrayIndices;
+  nmidx : Integer;
+  k : integer;
 begin
   SetLength(prepdna, dna.strcCount);
+
+  SetLength(namesref, dna.namesCount);
+  for i := 0 to dna.namesCount -1 do
+  begin
+    BlenderNameParse(dna.names[i], nm, namesref[i].ptr, namesref[i].arr );
+    if not namehash.contains(nm) then begin
+      namehash[nm] := i;
+      namesref[i].idx := i;
+    end else
+      namesref[i].idx := namehash[nm];
+  end;
 
   for i := 0 to dna.strcCount-1 do begin
 
@@ -488,20 +549,31 @@ begin
     ofs := 0;
     for j := 0 to cnt - 1 do begin
       prepdna[i].field[j].ofs := ofs;
-      ln := dna.typesLen[ dna.strcs[i].flds[j].idxType ];
+      nmidx := dna.strcs[i].flds[j].idxName;
+
+
+      if namesref[nmidx].ptr <> pmNone then
+        ln := ptrSize
+      else begin
+        ln := dna.typesLen[ dna.strcs[i].flds[j].idxType ];
+        if namesref[nmidx].arr.count > 0 then begin
+          for k:=0 to namesref[nmidx].arr.count-1 do
+            ln := ln * namesref[nmidx].arr.sizes[k];
+        end;
+      end;
       prepdna[i].field[j].size := ln;
-      inc(ln, ofs);
+      prepdna[i].field[j].nameidx := namesref[nmidx].idx;
+      inc(ofs, ln);
     end;
 
     structhash[ dna.types[ dna.strcs[i].idxType ] ] := i;
   end;
-  for i := 0 to dna.namesCount -1 do
-    namehash[ dna.names[i] ] := i;
 end;
 
-constructor TBlendDNA.Create;
+constructor TBlendDNA.Create(aptrSize: integer);
 begin
   inherited Create;
+  ptrSize := aptrSize;
   namehash := TBlendDNANameHash.Create;
   structhash := TBlendDNANameHash.Create;
 end;
@@ -513,6 +585,12 @@ begin
   inherited Destroy;
 end;
 
+procedure TBlendDNA.SetDNA(const adna: TSDNA);
+begin
+  dna := adna;
+  PrepareDNA;
+end;
+
 procedure TBlendDNA.SetDNA(const buf: array of byte; bufSize: Integer);
 begin
   ParseSDNA(buf, bufSize, dna);
@@ -521,6 +599,8 @@ end;
 
 function TBlendDNA.GetFieldSizeOfs(stidx: Integer; fieldidx: Integer; out fieldOfs,
   fieldSize: Integer): Boolean;
+var
+  tidx : integer;
 begin
   Result := (stidx>=0) and (stidx < Length(prepdna))
     and (fieldidx >= 0) and (fieldidx < length(prepdna[stidx].field));
@@ -528,6 +608,7 @@ begin
     fieldOfs := 0;
     fieldSize := 0;
   end else begin
+    tidx := dna.strcs[stidx].flds[fieldidx].idxType;
     fieldOfs := prepdna[stidx].field[fieldidx].ofs;
     fieldSize := prepdna[stidx].field[fieldidx].size;
   end;
@@ -548,8 +629,8 @@ begin
   idx := NameIndex(fieldName);
   if (idx < 0) then Exit;
 
-  for i:= 0 to dna.strcs[structIdx].fldsCount-1 do
-    if dna.strcs[structIdx].flds[i].idxName = idx then begin
+  for i:= 0 to length(prepdna[structIdx].field)-1 do
+    if prepdna[structIdx].field[i].nameidx = idx then begin
       Result := i;
       Exit;
     end;
@@ -568,9 +649,9 @@ end;
 
 { TBlendBlockMapCompare }
 
-class function TBlendBlockMapCompare.c(const addr1, addr2: Int64): Boolean;
+class function TBlendBlockMapCompare.c(addr1, addr2: Int64): Boolean;
 begin
-  Result := addr1 = addr2;
+  Result := addr1 > addr2;
 end;
 
 { TBlendBlock }
@@ -587,7 +668,7 @@ end;
 constructor TBlend.Create;
 begin
   inherited Create;
-  blocks := TList.Create; // of TBlendBlock
+  blocks := TBlendBlockList.Create; // of TBlendBlock
   blockmap := TBlendBlockMap.Create;
 end;
 
@@ -610,7 +691,8 @@ end;
 
 function TBlend.BlockAtMemPtr(const memptr: Int64): TBlendBlock;
 begin
-  Result := blockmap[memptr];
+  if not blockmap.TryGetValue(memptr, Result) then
+    Result := nil;
 end;
 
 end.

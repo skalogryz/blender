@@ -26,6 +26,7 @@ type
   TPointerModifier = (pmNone, pmPointer, pmDoublePointer, pmFuncRef);
 
 function BlenderNameParse(const name: string; out normname: string; out isPointer: TPointerModifier; out arrSizes: TArrayIndices): Boolean;
+function BlenderNameToOnlyName(const name: string): string;
 
 implementation
 
@@ -88,6 +89,14 @@ begin
     isPointer := pmNone;
   end;
   Result := normname <> '';
+end;
+
+function BlenderNameToOnlyName(const name: string): string;
+var
+  ptr : TPointerModifier;
+  arr : TArrayIndices;
+begin
+  BlenderNameParse(name, Result, ptr, arr);
 end;
 
 end.
