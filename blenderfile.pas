@@ -52,16 +52,17 @@ type
     fPos     : Int64;
     fData    : TStream;
     fEndBFound : Boolean;
+    fBlockOffset : Int64;
 
+    function GetBlockCode: string;
+    function GetBlockOffset: Int64;
+    function GetBlockSize: Int64;
     procedure SetError(AErrCode: Integer);
   public
     ver     : array [0..2] of char;
     isEof   : Boolean;
     isError : Boolean;
     ErrCode : Integer;
-    DataOffset: Int64;
-    DataSize  : Int64;
-    DataCode  : string;
 
     curBlock : TFileBlock;
     function FindFirst(st: TStream): Boolean; overload;
@@ -70,6 +71,7 @@ type
     property PtrSize: Byte read fPtrSize;
     property isPtrLE: Boolean read fisPtrLE;
     property Data: TStream read fData;
+    property DataOffset: Int64 read GetBlockOffset;
   end;
 
 const
@@ -132,7 +134,28 @@ const
 
 function CompareFour(const f1, f2: TFourChar): Boolean; inline;
 
+const
+  PACKED_HEADER_SIZE = 10;
+
+function isPacked(s: TStream; out headrSize: Integer): Boolean;
+
 implementation
+
+function isPacked(s: TStream; out headrSize: Integer): Boolean;
+var
+  buf : array [0..PACKED_HEADER_SIZE-1] of byte;
+  pos : Int64;
+begin
+  pos := s.Position;
+  try
+    s.Read(buf, sizeof(buf));
+    Result := (buf[0]=$1f) and (buf[1]=$8b);
+    if Result then headrSize := sizeof(buf)
+    else headrSize := 0;
+  finally
+    s.Position := pos;
+  end;
+end;
 
 function CompareFour(const f1, f2: TFourChar): Boolean; inline;
 begin
@@ -182,6 +205,21 @@ procedure TBlendReader.SetError(AErrCode: Integer);
 begin
   isError:=true;
   ErrCode:=AErrCode;
+end;
+
+function TBlendReader.GetBlockCode: string;
+begin
+  Result := curBlock.code;
+end;
+
+function TBlendReader.GetBlockOffset: Int64;
+begin
+  Result := fBlockOffset;
+end;
+
+function TBlendReader.GetBlockSize: Int64;
+begin
+  Result := curBlock.size;
 end;
 
 function TBlendReader.FindFirst(st: TStream): Boolean;
@@ -241,9 +279,7 @@ begin
     fEndBFound:=true;
 
   inc(fPos,ofs);
-  DataOffset:=fPos;
-  DataSize:=hdr.Size;
-  DataCode:=hdr.code;
+  fBlockOffset:=fPos;
   inc(fPos,hdr.size);
   Result:=true;
 end;
