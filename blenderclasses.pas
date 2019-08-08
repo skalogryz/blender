@@ -73,7 +73,7 @@ type
 
     procedure SetDNA(const buf: array of byte; bufSize: Integer); overload;
 
-    function ReadField(stidx: Integer; fieldidx: Integer;
+    function GetFieldSizeOfs(stidx: Integer; fieldidx: Integer;
       out fieldOfs, fieldSize: Integer): Boolean;
     function StructIndex(const name: string): Integer;
     function FieldIndex(structIdx: Integer; const fieldname: string): Integer;
@@ -81,24 +81,66 @@ type
     function NameIndex(const name: string): Integer;
   end;
 
-  { TBlendStructReader }
+  { TBlendBinReader }
 
-  TBlendStructReader = class(TObject)
+  TBlendBinReader = class(TObject)
   private
     fptr32   : Boolean;
     fLitEnd  : Boolean;
 
     fSource  : TStream;
     fOfs     : Int64;
-    fStructIdx : Integer;
   public
     constructor Create(aLittleEnd, APtr32: Boolean);
-    procedure SetSource(astructIdx: Integer; ASource: TStream; Ofs: Int64);
+    procedure SetSource(ASource: TStream; Ofs: Int64);
 
-    function ReadFloat(const ofs: Integer; out vl: Single): boolean;
+    function Read(const ofs: Integer; out vl: Int8): Boolean; overload;
+    function Read(const ofs: Integer; out vl: UInt8): Boolean; overload;
+    function Read(const ofs: Integer; out vl: Int16): Boolean; overload;
+    function Read(const ofs: Integer; out vl: UInt16): Boolean; overload;
+    function Read(const ofs: Integer; out vl: Int32): Boolean; overload;
+    function Read(const ofs: Integer; out vl: UInt32): Boolean; overload;
+    function Read(const ofs: Integer; out vl: Int64): Boolean; overload;
+    function Read(const ofs: Integer; out vl: UInt64): Boolean; overload;
+    function Read(const ofs: Integer; out vl: Single): Boolean; overload;
+    function Read(const ofs: Integer; out vl: Double): Boolean; overload;
+    function ReadPtr(const ofs: Integer; out vl: UInt64): Boolean;
+    function ReadBuf(const ofs: Integer; var dst: array of byte; dstLen: Integer): Boolean;
 
     property Source: TStream read fSource;
-    property StructIdx: Integer read fStructIdx;
+    function SizeOfPtr: integer;
+    property isLittleEndian: Boolean read fLitEnd;
+  end;
+
+  { TBlendStructRead }
+
+  TBlendStructRead = class(TObject)
+  private
+    binReader  : TBlendBinReader;
+    fDNA       : TBlendDNA;
+    fStructIdx : integer;
+
+    function GetFieldOffset(const fieldName: string; out ofs, len: integer): Boolean;
+    function GetSource: TStream;
+  public
+    constructor Create(aLittleEnd, APtr32: Boolean);
+    destructor Destroy; override;
+    procedure SetSource(ASource: TStream; Ofs: Int64; ABlendDNA: TBlendDNA; AStructIdx: Integer);
+
+    function Read(const fieldName: string; out vl: Int8): Boolean; overload;
+    function Read(const fieldName: string; out vl: UInt8): Boolean; overload;
+    function Read(const fieldName: string; out vl: Int16): Boolean; overload;
+    function Read(const fieldName: string; out vl: UInt16): Boolean; overload;
+    function Read(const fieldName: string; out vl: Int32): Boolean; overload;
+    function Read(const fieldName: string; out vl: UInt32): Boolean; overload;
+    function Read(const fieldName: string; out vl: Int64): Boolean; overload;
+    function Read(const fieldName: string; out vl: UInt64): Boolean; overload;
+    function Read(const fieldName: string; out vl: Single): Boolean; overload;
+    function Read(const fieldName: string; out vl: Double): Boolean; overload;
+    function ReadPtr(const fieldName: string; out vl: UInt64): Boolean;
+    function ReadBuf(const fieldName: string; var dst: array of byte; dstLen: Integer): Boolean;
+
+    property Source: TStream read GetSource;
   end;
 
 function ReadFromStream(blend: TBlend; source: TStream): Boolean;
@@ -127,21 +169,288 @@ begin
   end;
 end;
 
-{ TBlendStructReader }
+{ TBlendStructRead }
 
-constructor TBlendStructReader.Create(aLittleEnd, APtr32: Boolean);
+function TBlendStructRead.GetFieldOffset(const fieldName: string;
+  out ofs, len: Integer): Boolean;
+begin
+  Result := Assigned(fDNA)
+    and fDNA.GetFieldSizeOfs(fStructIdx, fDNA.FieldIndex(fStructIdx, fieldName), ofs, len);
+  if not Result then begin
+    ofs := 0;
+    len := 0;
+  end;
+end;
+
+function TBlendStructRead.GetSource: TStream;
+begin
+  Result := binReader.Source;
+end;
+
+constructor TBlendStructRead.Create(aLittleEnd, APtr32: Boolean);
+begin
+  inherited Create;
+  binReader := TBlendBinReader.Create(alittleEnd, Aptr32);
+end;
+
+destructor TBlendStructRead.Destroy;
+begin
+  binReader.Free;
+  inherited Destroy;
+end;
+
+procedure TBlendStructRead.SetSource(ASource: TStream; Ofs: Int64;
+  ABlendDNA: TBlendDNA; AStructIdx: Integer);
+begin
+  binReader.SetSource(ASource, Ofs);
+  fDNA := ABlendDNA;
+  fstructIdx := AStructIdx;
+end;
+
+function TBlendStructRead.Read(const fieldName: string; out vl: Int8): Boolean;
+var
+  ofs, len : Integer;
+begin
+  Result := GetFieldOffset(fieldName, ofs, len) and (len >= sizeof(vl));
+  if not Result then Exit;
+  Result := binReader.Read(ofs, vl);
+end;
+
+function TBlendStructRead.Read(const fieldName: string; out vl: UInt8
+  ): Boolean;
+var
+  ofs, len : Integer;
+begin
+  Result := GetFieldOffset(fieldName, ofs, len) and (len >= sizeof(vl));
+  if not Result then Exit;
+  Result := binReader.Read(ofs, vl);
+end;
+
+function TBlendStructRead.Read(const fieldName: string; out vl: Int16
+  ): Boolean;
+var
+  ofs, len : Integer;
+begin
+  Result := GetFieldOffset(fieldName, ofs, len) and (len >= sizeof(vl));
+  if not Result then Exit;
+  Result := binReader.Read(ofs, vl);
+end;
+
+function TBlendStructRead.Read(const fieldName: string; out vl: UInt16
+  ): Boolean;
+var
+  ofs, len : Integer;
+begin
+  Result := GetFieldOffset(fieldName, ofs, len) and (len >= sizeof(vl));
+  if not Result then Exit;
+  Result := binReader.Read(ofs, vl);
+end;
+
+function TBlendStructRead.Read(const fieldName: string; out vl: Int32
+  ): Boolean;
+var
+  ofs, len : Integer;
+begin
+  Result := GetFieldOffset(fieldName, ofs, len) and (len >= sizeof(vl));
+  if not Result then Exit;
+  Result := binReader.Read(ofs, vl);
+end;
+
+function TBlendStructRead.Read(const fieldName: string; out vl: UInt32
+  ): Boolean;
+var
+  ofs, len : Integer;
+begin
+  Result := GetFieldOffset(fieldName, ofs, len) and (len >= sizeof(vl));
+  if not Result then Exit;
+  Result := binReader.Read(ofs, vl);
+end;
+
+function TBlendStructRead.Read(const fieldName: string; out vl: Int64
+  ): Boolean;
+var
+  ofs, len : Integer;
+begin
+  Result := GetFieldOffset(fieldName, ofs, len) and (len >= sizeof(vl));
+  if not Result then Exit;
+  Result := binReader.Read(ofs, vl);
+end;
+
+function TBlendStructRead.Read(const fieldName: string; out vl: UInt64
+  ): Boolean;
+var
+  ofs, len : Integer;
+begin
+  Result := GetFieldOffset(fieldName, ofs, len) and (len >= sizeof(vl));
+  if not Result then Exit;
+  Result := binReader.Read(ofs, vl);
+end;
+
+function TBlendStructRead.Read(const fieldName: string; out vl: Single
+  ): Boolean;
+var
+  ofs, len : Integer;
+begin
+  Result := GetFieldOffset(fieldName, ofs, len) and (len >= sizeof(vl));
+  if not Result then Exit;
+  Result := binReader.Read(ofs, vl);
+end;
+
+function TBlendStructRead.Read(const fieldName: string; out vl: Double
+  ): Boolean;
+var
+  ofs, len : Integer;
+begin
+  Result := GetFieldOffset(fieldName, ofs, len) and (len >= sizeof(vl));
+  if not Result then Exit;
+  Result := binReader.Read(ofs, vl);
+end;
+
+function TBlendStructRead.ReadPtr(const fieldName: string; out vl: UInt64): Boolean;
+var
+  ofs, len : Integer;
+begin
+  Result := GetFieldOffset(fieldName, ofs, len) and (len >= binReader.SizeOfPtr);
+  if not Result then Exit;
+  Result := binReader.ReadPtr(ofs, vl);
+end;
+
+function TBlendStructRead.ReadBuf(const fieldName: string;
+  var dst: array of byte; dstLen: Integer): Boolean;
+var
+  ofs, len : Integer;
+begin
+  Result := GetFieldOffset(fieldName, ofs, len) and (len >= dstLen);
+  if not Result then Exit;
+  Result := binReader.ReadBuf(ofs, dst, dstLen);
+end;
+
+{ TBlendBinReader }
+
+constructor TBlendBinReader.Create(aLittleEnd, APtr32: Boolean);
 begin
   inherited Create;
   fLitEnd := aLittleEnd;
   fptr32 := APtr32;
 end;
 
-procedure TBlendStructReader.SetSource(astructIdx: Integer; ASource: TStream; Ofs: Int64);
+procedure TBlendBinReader.SetSource(ASource: TStream; Ofs: Int64);
 begin
   fSource := ASource;
   fOfs := Ofs;
-  fStructIdx := astructIdx;
 end;
+
+function TBlendBinReader.Read(const ofs: Integer; out vl: Int8): Boolean;
+begin
+  fSource.Position := ofs + fOfs;
+  Result := fSource.Read(vl, sizeof(vl)) = sizeof(vl);
+end;
+
+function TBlendBinReader.Read(const ofs: Integer; out vl: UInt8): Boolean;
+begin
+  fSource.Position := ofs + fOfs;
+  Result := fSource.Read(vl, sizeof(vl)) = sizeof(vl);
+end;
+
+function TBlendBinReader.Read(const ofs: Integer; out vl: Int16): Boolean;
+begin
+  fSource.Position := ofs + fOfs;
+  Result := fSource.Read(vl, sizeof(vl)) = sizeof(vl);
+  if Result then begin
+    if fLitEnd then vl := LEtoN(vl)
+    else vl := BEtoN(vl);
+  end;
+end;
+
+function TBlendBinReader.Read(const ofs: Integer; out vl: UInt16
+  ): Boolean;
+begin
+  fSource.Position := ofs + fOfs;
+  Result := fSource.Read(vl, sizeof(vl)) = sizeof(vl);
+  if Result then begin
+    if fLitEnd then vl := LEtoN(vl)
+    else vl := BEtoN(vl);
+  end;
+end;
+
+function TBlendBinReader.Read(const ofs: Integer; out vl: Single): Boolean;
+begin
+  fSource.Position := ofs + fOfs;
+  Result := fSource.Read(vl, sizeof(vl)) = sizeof(vl);
+end;
+
+function TBlendBinReader.Read(const ofs: Integer; out vl: Double
+  ): Boolean;
+begin
+  fSource.Position := ofs + fOfs;
+  Result := fSource.Read(vl, sizeof(vl)) = sizeof(vl);
+end;
+
+function TBlendBinReader.ReadPtr(const ofs: Integer; out vl: UInt64): Boolean;
+var
+  d : UInt32;
+begin
+  if fptr32 then begin
+    Result := Read(ofs, d);
+    vl := d;
+  end else
+    Result := Read(ofs, vl);
+end;
+
+function TBlendBinReader.ReadBuf(const ofs: Integer; var dst: array of byte;
+  dstLen: Integer): Boolean;
+begin
+  fSource.Position := ofs + fOfs;
+  Result := fSource.Read(dst[0], dstLen) = dstLen;
+end;
+
+function TBlendBinReader.SizeOfPtr: integer;
+begin
+  if fptr32 then Result := 4 else Result := 8;
+end;
+
+function TBlendBinReader.Read(const ofs: Integer; out vl: Int32): Boolean;
+begin
+  fSource.Position := ofs + fOfs;
+  Result := fSource.Read(vl, sizeof(vl)) = sizeof(vl);
+  if Result then begin
+    if fLitEnd then vl := LEtoN(vl)
+    else vl := BEtoN(vl);
+  end;
+end;
+
+function TBlendBinReader.Read(const ofs: Integer; out vl: UInt32
+  ): Boolean;
+begin
+  fSource.Position := ofs + fOfs;
+  Result := fSource.Read(vl, sizeof(vl)) = sizeof(vl);
+  if Result then begin
+    if fLitEnd then vl := LEtoN(vl)
+    else vl := BEtoN(vl);
+  end;
+end;
+
+function TBlendBinReader.Read(const ofs: Integer; out vl: Int64): Boolean;
+begin
+  fSource.Position := ofs + fOfs;
+  Result := fSource.Read(vl, sizeof(vl)) = sizeof(vl);
+  if Result then begin
+    if fLitEnd then vl := LEtoN(vl)
+    else vl := BEtoN(vl);
+  end;
+end;
+
+function TBlendBinReader.Read(const ofs: Integer; out vl: UInt64
+  ): Boolean;
+begin
+  fSource.Position := ofs + fOfs;
+  Result := fSource.Read(vl, sizeof(vl)) = sizeof(vl);
+  if Result then begin
+    if fLitEnd then vl := LEtoN(vl)
+    else vl := BEtoN(vl);
+  end;
+end;
+
 
 { TStringHash }
 
@@ -210,7 +519,7 @@ begin
   PrepareDNA;
 end;
 
-function TBlendDNA.ReadField(stidx: Integer; fieldidx: Integer; out fieldOfs,
+function TBlendDNA.GetFieldSizeOfs(stidx: Integer; fieldidx: Integer; out fieldOfs,
   fieldSize: Integer): Boolean;
 begin
   Result := (stidx>=0) and (stidx < Length(prepdna))
