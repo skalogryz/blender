@@ -312,9 +312,9 @@ begin
     writeln('Pointer size: ', rdr.PtrSize);
 
     while rdr.NextBlock do begin
-      writeln('  data: ', rdr.DataCode,'; ofs: ',rdr.DataOffset,'; sz: ',rdr.DataSize);
-      if rdr.DataCode = BLOCK_SDNA then begin
-        ParseSDNA(rdr.Data, rdr.DataOffset, rdr.DataSize, dna);
+      writeln('  data: ', rdr.curBlock.code,'; ofs: ',rdr.DataOffset,'; sz: ',rdr.curBlock.size);
+      if rdr.curBlock.Code = BLOCK_SDNA then begin
+        ParseSDNA(rdr.Data, rdr.DataOffset, rdr.curBlock.Size, dna);
         DumpDNA(dna);
       end;
     end;
