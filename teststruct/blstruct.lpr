@@ -9,7 +9,7 @@ uses
   cthreads,
   {$ENDIF}{$ENDIF}
   SysUtils, Classes, blenderfile, BlenderZlibUtils, BlenderTypesUtils
-  ,BlenderClasses
+  ,BlenderReadUtils
   ;
 
 procedure DumpBlocks(bld: TBlend);
