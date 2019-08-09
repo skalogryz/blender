@@ -62,6 +62,8 @@ type
                        //   this would be PtrSize
                        //   for arrays this is type size * array size
     nameidx : Integer; // the index in namehash of normalized named
+    ptrmod  : TPointerModifier;
+    arr     : TArrayIndices;
   end;
 
   TBlendDNAStruct = record
@@ -80,6 +82,7 @@ type
   TBlendDNA = class(TObject)
   private
     prepdna    : array of TBlendDNAStruct; // each entry in prepDna correpsonds to a struct in "dna"
+    typetostr  : array of Integer; // converstion of TypeIdx to StructIdx (if available)
 
     namehash   : TBlendDNANameHash; // normalized names. No modifiers.
     structhash : TBlendDNANameHash;
@@ -96,6 +99,11 @@ type
 
     function GetFieldSizeOfs(stidx: Integer; fieldidx: Integer;
       out fieldOfs, fieldSize: Integer): Boolean;
+    function GetFieldSizeOfsStr(stidx: Integer; fieldidx: Integer;
+      out fieldOfs, fieldSize, fieldStIdx: Integer): Boolean;
+    function GetFieldAttribs(stidx: Integer; fieldidx: Integer;
+      out ptrmod: TPointerModifier; out arr: TArrayIndices): Boolean;
+
     function StructIndex(const name: string): Integer;
     function FieldIndex(structIdx: Integer; const fieldname: string): Integer;
     function FieldIndex(const structname, fieldname: string): Integer;
@@ -129,17 +137,26 @@ type
     function ReadBuf(const ofs: Integer; var dst: array of byte; dstLen: Integer): Boolean;
 
     property Source: TStream read fSource;
+    property Offset: Int64 read fOfs;
     function SizeOfPtr: integer;
     property isLittleEndian: Boolean read fLitEnd;
+  end;
+
+  TBlendStructReadStack = record
+    ofs  : Int64;   // (absolute) offset
+    stid : integer; // structure index
   end;
 
   { TBlendStructRead }
 
   TBlendStructRead = class(TObject)
   private
-    binReader  : TBlendBinReader;
+    fbinReader  : TBlendBinReader;
     fDNA       : TBlendDNA;
     fStructIdx : integer;
+
+    fStack     : array of TBlendStructReadStack;
+    fStackCnt  : integer;
 
     function GetFieldOffset(const fieldName: string; out ofs, len: integer): Boolean;
     function GetSource: TStream;
@@ -147,6 +164,9 @@ type
     constructor Create(aLittleEnd, APtr32: Boolean);
     destructor Destroy; override;
     procedure SetSource(ASource: TStream; Ofs: Int64; ABlendDNA: TBlendDNA; AStructIdx: Integer);
+
+    procedure PushStruct(AOfs: Int64; AStructIdx: Integer; isRelativeOfs: Boolean);
+    function PopStruct: Boolean;
 
     function Read(const fieldName: string; out vl: Int8): Boolean; overload;
     function Read(const fieldName: string; out vl: UInt8): Boolean; overload;
@@ -161,7 +181,11 @@ type
     function ReadPtr(const fieldName: string; out vl: UInt64): Boolean;
     function ReadBuf(const fieldName: string; var dst: array of byte; dstLen: Integer): Boolean;
 
+    function ReadStr(const fieldName: string; var dst: string): Boolean; // the length is taken from the field length
+
     property Source: TStream read GetSource;
+    property StructIdx: Integer read fStructIdx;
+    property BinReader: TBlendBinReader read fbinReader;
   end;
 
 function ReadFromStream(blend: TBlend; source: TStream): Boolean;
@@ -208,8 +232,8 @@ end;
 
 { TBlendStructRead }
 
-function TBlendStructRead.GetFieldOffset(const fieldName: string;
-  out ofs, len: Integer): Boolean;
+function TBlendStructRead.GetFieldOffset(const fieldName: string; out ofs,
+  len: integer): Boolean;
 begin
   Result := Assigned(fDNA)
     and fDNA.GetFieldSizeOfs(fStructIdx, fDNA.FieldIndex(fStructIdx, fieldName), ofs, len);
@@ -227,12 +251,12 @@ end;
 constructor TBlendStructRead.Create(aLittleEnd, APtr32: Boolean);
 begin
   inherited Create;
-  binReader := TBlendBinReader.Create(alittleEnd, Aptr32);
+  fbinReader := TBlendBinReader.Create(alittleEnd, Aptr32);
 end;
 
 destructor TBlendStructRead.Destroy;
 begin
-  binReader.Free;
+  fbinReader.Free;
   inherited Destroy;
 end;
 
@@ -242,6 +266,29 @@ begin
   binReader.SetSource(ASource, Ofs);
   fDNA := ABlendDNA;
   fstructIdx := AStructIdx;
+end;
+
+procedure TBlendStructRead.PushStruct(AOfs: Int64; AStructIdx: Integer; isRelativeOfs: Boolean);
+begin
+  if length(fStack) = fStackCnt then
+    SetLength(fStack, 4)
+  else
+    SetLength(fStack, fStackCnt * 2);
+  fStack[fStackCnt].ofs := binReader.Offset;
+  fStack[fStackCnt].stid := fStructIdx;
+  inc(fStackCnt);
+  if isRelativeOfs then
+    SetSource(binReader.Source, binReader.Offset+AOfs, fDNA, AStructIdx)
+  else
+    SetSource(binReader.Source, AOfs, fDNA, AStructIdx)
+end;
+
+function TBlendStructRead.PopStruct: Boolean;
+begin
+  Result := fStackCnt>0;
+  if not Result then Exit;
+  dec(fStackCnt);
+  SetSource(binReader.Source, fStack[fStackCnt].ofs, fDNA, fStack[fStackCnt].stid);
 end;
 
 function TBlendStructRead.Read(const fieldName: string; out vl: Int8): Boolean;
@@ -360,6 +407,20 @@ begin
   Result := GetFieldOffset(fieldName, ofs, len) and (len >= dstLen);
   if not Result then Exit;
   Result := binReader.ReadBuf(ofs, dst, dstLen);
+end;
+
+function TBlendStructRead.ReadStr(const fieldName: string; var dst: string): Boolean;
+var
+  ofs, len : Integer;
+begin
+  Result := GetFieldOffset(fieldName, ofs, len);
+  if not Result then Exit;
+  SetLength(dst, len);
+  if len = 0 then begin
+    dst := '';
+    Result := true;
+  end else
+    Result := binReader.ReadBuf(ofs, PByteArray(@dst[1])^, len);
 end;
 
 { TBlendBinReader }
@@ -524,14 +585,14 @@ var
   ln  : integer;
   nm  : string;
   namesref : array of TNameReference;
-  ptr : TPointerModifier;
-  arr : TArrayIndices;
   nmidx : Integer;
   k : integer;
 begin
   SetLength(prepdna, dna.strcCount);
-
+  SetLength(typetostr, dna.typesCount);
+  FillDWord(typetostr[1], length(typetostr), $FFFFFFFF);
   SetLength(namesref, dna.namesCount);
+
   for i := 0 to dna.namesCount -1 do
   begin
     BlenderNameParse(dna.names[i], nm, namesref[i].ptr, namesref[i].arr );
@@ -551,7 +612,6 @@ begin
       prepdna[i].field[j].ofs := ofs;
       nmidx := dna.strcs[i].flds[j].idxName;
 
-
       if namesref[nmidx].ptr <> pmNone then
         ln := ptrSize
       else begin
@@ -563,10 +623,13 @@ begin
       end;
       prepdna[i].field[j].size := ln;
       prepdna[i].field[j].nameidx := namesref[nmidx].idx;
+      prepdna[i].field[j].ptrmod := namesref[nmidx].ptr;
+      prepdna[i].field[j].arr := namesref[nmidx].arr;
       inc(ofs, ln);
     end;
 
     structhash[ dna.types[ dna.strcs[i].idxType ] ] := i;
+    typetostr[ dna.strcs[i].idxType ] := i;
   end;
 end;
 
@@ -597,8 +660,16 @@ begin
   PrepareDNA;
 end;
 
-function TBlendDNA.GetFieldSizeOfs(stidx: Integer; fieldidx: Integer; out fieldOfs,
-  fieldSize: Integer): Boolean;
+function TBlendDNA.GetFieldSizeOfs(stidx: Integer; fieldidx: Integer;
+  out fieldOfs, fieldSize: Integer): Boolean;
+var
+  fieldstidx: Integer;
+begin
+  Result := GetFieldSizeOfsStr(stidx, fieldidx, fieldOfs, fieldSize, fieldStIdx);
+end;
+
+function TBlendDNA.GetFieldSizeOfsStr(stidx: Integer; fieldidx: Integer;
+  out fieldOfs, fieldSize, fieldStIdx: Integer): Boolean;
 var
   tidx : integer;
 begin
@@ -607,10 +678,26 @@ begin
   if not Result then begin
     fieldOfs := 0;
     fieldSize := 0;
+    fieldStIdx := -1;
   end else begin
     tidx := dna.strcs[stidx].flds[fieldidx].idxType;
     fieldOfs := prepdna[stidx].field[fieldidx].ofs;
     fieldSize := prepdna[stidx].field[fieldidx].size;
+    fieldStIdx := typetostr[tidx];
+  end;
+end;
+
+function TBlendDNA.GetFieldAttribs(stidx: Integer; fieldidx: Integer;
+  out ptrmod: TPointerModifier; out arr: TArrayIndices): Boolean;
+begin
+  Result := (stidx>=0) and (stidx < Length(prepdna))
+    and (fieldidx >= 0) and (fieldidx < length(prepdna[stidx].field));
+  if not Result then begin
+    ptrmod := pmNone;
+    arr.count := 0;
+  end else begin
+    ptrmod := prepdna[stidx].field[fieldidx].ptrmod;
+    arr := prepdna[stidx].field[fieldidx].arr;
   end;
 end;
 
