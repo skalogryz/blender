@@ -18,6 +18,8 @@ type
   TFilePtr32 = LongWord;
   TFilePtr64 = QWord;
 
+  TBlenderPtr = QWord;
+
   TFileHeader = packed record
     id        : array [0..6] of char;
     ptrsize   : char;
