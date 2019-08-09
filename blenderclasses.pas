@@ -5,7 +5,7 @@ unit BlenderClasses;
 interface
 
 uses
-  SysUtils, Classes  , fgl
+  SysUtils, Classes
   ,gmap, ghashmap, gvector
   ,BlenderFile, BlenderTypesUtils;
 
