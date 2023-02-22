@@ -34,7 +34,7 @@
       <Unit1>
         <Filename Value="..\blendertypesutils.pas"/>
         <IsPartOfProject Value="True"/>
-        <UnitName Value="blenderTypesUtils"/>
+        <UnitName Value="BlenderTypesUtils"/>
       </Unit1>
     </Units>
   </ProjectOptions>
